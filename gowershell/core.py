@@ -78,7 +78,7 @@ class Gowershell:
         self._is_running = False
 
         if self.verbose:
-            log.info(f"Initializing Gowershell with executable: {executable}")
+            log.success(f"Successfully initialized Gowershell with executable: {executable}")
 
     async def __aenter__(self):
         """Async context manager entry"""
@@ -140,6 +140,7 @@ class Gowershell:
         command: str,
         cmd_type: str = "cmd",
         headless: bool = True,
+        persist_window: bool = False,
         verbose: Optional[bool] = None
     ) -> Response:
         """Execute a command asynchronously"""
@@ -157,11 +158,13 @@ class Gowershell:
                 "command": command,
                 "type": cmd_type,
                 "headless": headless,
+                "persist_window": persist_window,
                 "verbose": verbose
             }
 
             if verbose:
-                log.info(f"Executing command: {command} (type: {cmd_type}, headless: {headless})")
+                window_mode = "headless" if headless else f"headed ({'persistent' if persist_window else 'auto-close'})"
+                log.info(f"Executing command: {command} (type: {cmd_type}, mode: {window_mode})")
 
             try:
                 # Send request
@@ -236,6 +239,32 @@ class Gowershell:
                 results.append(result)
             return results
 
+    # Convenience methods for common use cases
+    async def cmd(self, command: str, headless: bool = True, persist: bool = False) -> Response:
+        """Execute a cmd command"""
+        return await self.execute(command, "cmd", headless, persist)
+
+    async def ps(self, command: str, headless: bool = True, persist: bool = False) -> Response:
+        """Execute a PowerShell command"""
+        return await self.execute(command, "powershell", headless, persist)
+
+    async def wsl(self, command: str, headless: bool = True, persist: bool = False) -> Response:
+        """Execute a WSL command"""
+        return await self.execute(command, "wsl", headless, persist)
+
+    # Window control convenience methods
+    async def show_cmd(self, command: str, persist: bool = True) -> Response:
+        """Execute cmd command in visible window"""
+        return await self.cmd(command, headless=False, persist=persist)
+
+    async def show_ps(self, command: str, persist: bool = True) -> Response:
+        """Execute PowerShell command in visible window"""
+        return await self.ps(command, headless=False, persist=persist)
+
+    async def quick_window(self, command: str, cmd_type: str = "cmd") -> Response:
+        """Show command output briefly then close window"""
+        return await self.execute(command, cmd_type, headless=False, persist_window=False)
+
     async def close(self):
         """Close the Gowershell process"""
         if self.verbose:
@@ -281,7 +310,7 @@ class Gowershell:
                 pass
 
 @asynccontextmanager
-async def gowershell(verbose: bool = DEBUG, executable: str = "./gowershell.exe"):
+async def gowershell(verbose: bool = DEBUG, executable: str = exe):
     """Async context manager for Gowershell"""
     shell = Gowershell(verbose=verbose, executable=executable)
     try:
@@ -289,40 +318,3 @@ async def gowershell(verbose: bool = DEBUG, executable: str = "./gowershell.exe"
         yield shell
     finally:
         await shell.close()
-
-# Usage examples
-async def main():
-    """Example usage of the enhanced Gowershell"""
-
-    # Method 1: Direct usage
-    shell = Gowershell(verbose=True)
-
-    try:
-        # Single command
-        result = await shell.execute("echo Hello, World!", "cmd", headless=False)
-        print(f"Output: {result.output}")
-
-        # Command with visible window
-        result = await shell.execute("az login", "cmd", headless=False)
-
-        # PowerShell command
-        result = await shell.execute("Get-Process", "powershell", verbose=True)
-
-        # Batch execution
-        commands = [
-            "dir",
-            {"command": "echo Batch command", "cmd_type": "cmd", "headless": True},
-            "powershell -Command Get-Date"
-        ]
-        results = await shell.execute_batch(commands, concurrent=True)
-
-    finally:
-        await shell.close()
-
-    # Method 2: Using context manager
-    async with gowershell(verbose=True) as shell:
-        result = await shell.execute("echo Context manager!", "cmd")
-        print(f"Result: {result.output}")
-
-if __name__ == "__main__":
-    asyncio.run(main())
