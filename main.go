@@ -21,6 +21,7 @@ var (
 type Request struct {
 	Command       string `json:"command"`
 	Type          string `json:"type,omitempty"`           // "cmd", "powershell", "wsl"
+	Distro        string `json:"distro,omitempty"`         // WSL distribution name (e.g., "Ubuntu", "Debian", "kali-linux")
 	Headless      bool   `json:"headless,omitempty"`       // true for headless, false for headed
 	Verbose       bool   `json:"verbose,omitempty"`        // toggleable verbose logging
 	PersistWindow bool   `json:"persist_window,omitempty"` // true to keep window open, false to close when done
@@ -65,6 +66,9 @@ func executeCommand(req Request) Response {
 	if req.Verbose {
 		debugInfo.WriteString(fmt.Sprintf("Executing command: %s\n", req.Command))
 		debugInfo.WriteString(fmt.Sprintf("Type: %s, Headless: %t, PersistWindow: %t\n", req.Type, req.Headless, req.PersistWindow))
+		if req.Distro != "" {
+			debugInfo.WriteString(fmt.Sprintf("WSL Distro: %s\n", req.Distro))
+		}
 	}
 
 	var cmd *exec.Cmd
@@ -73,7 +77,7 @@ func executeCommand(req Request) Response {
 	case "powershell", "ps":
 		cmd = exec.Command("powershell", "-Command", req.Command)
 	case "wsl":
-		cmd = exec.Command("wsl", "--", "bash", "-c", req.Command)
+		cmd = buildWSLCommand(req.Command, req.Distro, false)
 	default: // "cmd" or empty
 		cmd = exec.Command("cmd", "/C", req.Command)
 	}
@@ -96,7 +100,9 @@ func executeCommand(req Request) Response {
 				cmd = exec.Command("powershell", "-NoExit", "-Command", req.Command)
 			case "wsl":
 				// Launch WSL in a new window using cmd start
-				cmd = exec.Command("cmd", "/C", "start", "wsl", "--", "bash", "-c", req.Command+"; read -p 'Press Enter to close...'")
+				wslCmd := buildWSLCommand(req.Command+"; read -p 'Press Enter to close...'", req.Distro, true)
+				cmd = exec.Command("cmd", "/C", "start")
+				cmd.Args = append(cmd.Args, wslCmd.Args...)
 			default: // "cmd" or empty
 				// Launch cmd in a new window
 				cmd = exec.Command("cmd", "/C", "start", "cmd", "/K", req.Command)
@@ -199,6 +205,26 @@ func isUTF16(data []byte) bool {
 	}
 
 	return false
+}
+
+func buildWSLCommand(command, distro string, forWindow bool) *exec.Cmd {
+	var args []string
+
+	if distro != "" {
+		args = append(args, "wsl", "-d", distro)
+	} else {
+		args = append(args, "wsl")
+	}
+
+	args = append(args, "--", "bash", "-c", command)
+
+	if forWindow {
+		// For windowed execution, we need to handle this differently
+		// Return the arguments that will be used with cmd start
+		return &exec.Cmd{Args: args}
+	}
+
+	return exec.Command(args[0], args[1:]...)
 }
 
 func decodeUTF16(data []byte) string {
