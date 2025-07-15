@@ -10,6 +10,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf16"
 )
 
 // Windows-specific imports
@@ -128,8 +129,11 @@ func executeCommand(req Request) Response {
 	output, err := cmd.CombinedOutput()
 	duration := time.Since(start).Milliseconds()
 
+	// Process output with UTF-16 detection and decoding
+	processedOutput := processOutput(output, req.Verbose, &debugInfo)
+
 	resp := Response{
-		Output:   strings.TrimSpace(string(output)),
+		Output:   strings.TrimSpace(processedOutput),
 		Duration: duration,
 	}
 
@@ -146,4 +150,93 @@ func executeCommand(req Request) Response {
 	}
 
 	return resp
+}
+
+func processOutput(data []byte, verbose bool, debugInfo *strings.Builder) string {
+	if len(data) == 0 {
+		return ""
+	}
+
+	// Check if output might be UTF-16 encoded
+	if isUTF16(data) {
+		if verbose {
+			debugInfo.WriteString("UTF-16 encoding detected, decoding...\n")
+		}
+		return decodeUTF16(data)
+	}
+
+	// Standard UTF-8 processing
+	if verbose {
+		debugInfo.WriteString("Using standard UTF-8 processing\n")
+	}
+	return string(data)
+}
+
+func isUTF16(data []byte) bool {
+	// Check for UTF-16 BOM (Byte Order Mark)
+	if len(data) >= 2 {
+		// UTF-16 LE BOM: 0xFF 0xFE
+		if data[0] == 0xFF && data[1] == 0xFE {
+			return true
+		}
+		// UTF-16 BE BOM: 0xFE 0xFF
+		if data[0] == 0xFE && data[1] == 0xFF {
+			return true
+		}
+	}
+
+	// Heuristic check: if data length is even and contains many null bytes
+	// at even positions, it might be UTF-16 LE
+	if len(data)%2 == 0 && len(data) > 10 {
+		nullCount := 0
+		for i := 1; i < len(data); i += 2 {
+			if data[i] == 0 {
+				nullCount++
+			}
+		}
+		// If more than 30% of even positions are null, likely UTF-16 LE
+		return float64(nullCount)/float64(len(data)/2) > 0.3
+	}
+
+	return false
+}
+
+func decodeUTF16(data []byte) string {
+	// Handle BOM if present
+	start := 0
+	littleEndian := true
+
+	if len(data) >= 2 {
+		if data[0] == 0xFF && data[1] == 0xFE {
+			// UTF-16 LE BOM
+			start = 2
+			littleEndian = true
+		} else if data[0] == 0xFE && data[1] == 0xFF {
+			// UTF-16 BE BOM
+			start = 2
+			littleEndian = false
+		}
+	}
+
+	// Adjust data to remove BOM
+	data = data[start:]
+
+	// Check if data length is even (UTF-16 requires pairs of bytes)
+	if len(data)%2 != 0 {
+		return string(data) // fallback to regular string conversion
+	}
+
+	// Convert bytes to UTF-16 code units
+	utf16Data := make([]uint16, len(data)/2)
+	for i := 0; i < len(data)/2; i++ {
+		if littleEndian {
+			utf16Data[i] = uint16(data[i*2]) | (uint16(data[i*2+1]) << 8)
+		} else {
+			utf16Data[i] = uint16(data[i*2+1]) | (uint16(data[i*2]) << 8)
+		}
+	}
+
+	// Decode UTF-16 to runes and convert to string
+	runes := utf16.Decode(utf16Data)
+	return string(runes)
 }
