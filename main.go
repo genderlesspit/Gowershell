@@ -12,16 +12,17 @@ import (
 	"time"
 )
 
-// CreateNewConsole Windows-specific imports
+// Windows-specific imports
 var (
-	CreateNewConsole uint32 = 0x00000010
+	CREATE_NEW_CONSOLE uint32 = 0x00000010
 )
 
 type Request struct {
-	Command  string `json:"command"`
-	Type     string `json:"type,omitempty"`     // "cmd", "powershell", "wsl"
-	Headless bool   `json:"headless,omitempty"` // true for headless, false for headed
-	Verbose  bool   `json:"verbose,omitempty"`  // toggleable verbose logging
+	Command       string `json:"command"`
+	Type          string `json:"type,omitempty"`           // "cmd", "powershell", "wsl"
+	Headless      bool   `json:"headless,omitempty"`       // true for headless, false for headed
+	Verbose       bool   `json:"verbose,omitempty"`        // toggleable verbose logging
+	PersistWindow bool   `json:"persist_window,omitempty"` // true to keep window open, false to close when done
 }
 
 type Response struct {
@@ -62,7 +63,7 @@ func executeCommand(req Request) Response {
 
 	if req.Verbose {
 		debugInfo.WriteString(fmt.Sprintf("Executing command: %s\n", req.Command))
-		debugInfo.WriteString(fmt.Sprintf("Type: %s, Headless: %t\n", req.Type, req.Headless))
+		debugInfo.WriteString(fmt.Sprintf("Type: %s, Headless: %t, PersistWindow: %t\n", req.Type, req.Headless, req.PersistWindow))
 	}
 
 	var cmd *exec.Cmd
@@ -76,7 +77,7 @@ func executeCommand(req Request) Response {
 		cmd = exec.Command("cmd", "/C", req.Command)
 	}
 
-	// Configure window visibility based on a headless flag
+	// Configure window visibility based on headless flag
 	if req.Headless {
 		// Hide window for headless execution
 		cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -102,7 +103,7 @@ func executeCommand(req Request) Response {
 
 			cmd.SysProcAttr = &syscall.SysProcAttr{
 				HideWindow:    false,
-				CreationFlags: CreateNewConsole,
+				CreationFlags: CREATE_NEW_CONSOLE,
 			}
 		} else {
 			// Non-Windows fallback (Linux/Mac)
