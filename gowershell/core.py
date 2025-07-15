@@ -7,6 +7,7 @@ from loguru import logger as log
 import threading
 import queue
 from contextlib import asynccontextmanager
+from gowershell import exe
 
 DEBUG = True
 
@@ -66,7 +67,7 @@ class Response(dict):
 class Gowershell:
     """Async-capable Gowershell wrapper with enhanced features"""
 
-    def __init__(self, verbose: bool = DEBUG, executable: str = "./gowershell.exe"):
+    def __init__(self, verbose: bool = DEBUG, executable: str = exe):
         self.verbose = verbose
         self.executable = executable
         self.proc: Optional[subprocess.Popen] = None
