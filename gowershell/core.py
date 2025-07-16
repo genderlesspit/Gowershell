@@ -4,7 +4,7 @@ import queue
 import subprocess
 import threading
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Dict, Union
+from typing import Any, Optional, Dict, Union, List
 
 from loguru import logger as log
 from singleton_decorator import singleton
@@ -13,6 +13,30 @@ from gowershell import exe
 
 DEBUG = True
 
+def extract_json_blobs(content: str) -> List[Dict[str, Any]]:
+    log.debug(f"Starting synchronous extraction from content of length {len(content)}")
+
+    results = []
+    i = 0
+    while i < len(content):
+        if content[i] == '{':
+            log.debug(f"Found opening brace at position {i}")
+            for j in range(len(content) - 1, i, -1):
+                if content[j] == '}':
+                    try:
+                        json_str = content[i:j+1]
+                        parsed = json.loads(json_str)
+                        results.append(parsed)
+                        log.debug(f"Successfully parsed JSON blob: {json_str[:50]}...")
+                        i = j
+                        break
+                    except json.JSONDecodeError as e:
+                        log.debug(f"Failed to parse JSON at {i}:{j+1} - {e}")
+                        pass
+        i += 1
+
+    log.debug(f"Extraction complete. Found {len(results)} JSON blobs")
+    return results
 
 class Response(dict):
     """Enhanced response object with attribute access and verbose logging support"""
@@ -20,6 +44,8 @@ class Response(dict):
     error: str
     duration_ms: str
     debug: str
+    json: List[Dict[str, Any]]
+    str: str
 
     def __init__(self, verbose: bool = DEBUG, **kwargs):
         super().__init__()
@@ -35,8 +61,14 @@ class Response(dict):
         for key, value in kwargs.items():
             self[key] = value
 
+        if "output" in self:
+            self.json = extract_json_blobs(self["output"])
+            log.debug(self.json)
+
     def __getattr__(self, name):
         """Allow attribute access to dictionary items"""
+        if name == "str":
+            return self["output"]
         if name in self:
             return self[name]
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
