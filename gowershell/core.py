@@ -1,7 +1,6 @@
 import asyncio
 import subprocess
 import json
-from dataclasses import dataclass
 from typing import Any, Optional, Dict, Union
 from loguru import logger as log
 import threading
@@ -25,6 +24,10 @@ except ImportError:
 
 class Response(dict):
     """Enhanced response object with attribute access and verbose logging support"""
+    output: str
+    error: str
+    duration_ms: str
+    debug: str
 
     def __init__(self, verbose: bool = DEBUG, **kwargs):
         super().__init__()
