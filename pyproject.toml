@@ -1,0 +1,24 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "Gowershell"
+version = "0.0.1"
+dependencies = [
+    "singleton-decorator",
+    "loguru",
+    ""
+]
+requires-python = ">=3.8"
+authors = [
+  {name = "Miles Luce"}
+]
+description = "Go remote-controlled cmd/powershell/wsl for python"
+readme = "README.md"
+license = "MIT"
+keywords = []
+
+[project.urls]
+Repository = "https://github.com/genderlesspit/Gowershell"
+

@@ -1,26 +1,18 @@
 import asyncio
-import subprocess
 import json
-from typing import Any, Optional, Dict, Union
-from loguru import logger as log
-import threading
 import queue
+import subprocess
+import threading
 from contextlib import asynccontextmanager
+from typing import Any, Optional, Dict, Union
+
+from loguru import logger as log
+from singleton_decorator import singleton
+
 from gowershell import exe
 
 DEBUG = True
 
-try:
-    from singleton_decorator import singleton
-except ImportError:
-    # Fallback singleton implementation
-    def singleton(cls):
-        instances = {}
-        def get_instance(*args, **kwargs):
-            if cls not in instances:
-                instances[cls] = cls(*args, **kwargs)
-            return instances[cls]
-        return get_instance
 
 class Response(dict):
     """Enhanced response object with attribute access and verbose logging support"""
@@ -65,6 +57,7 @@ class Response(dict):
         """Log message if verbose mode is enabled"""
         if self._verbose:
             getattr(log, level.lower())(message)
+
 
 @singleton
 class Gowershell:
@@ -139,12 +132,12 @@ class Gowershell:
                 break
 
     async def execute(
-        self,
-        command: str,
-        cmd_type: str = "cmd",
-        headless: bool = True,
-        persist_window: bool = False,
-        verbose: Optional[bool] = None
+            self,
+            command: str,
+            cmd_type: str = "cmd",
+            headless: bool = True,
+            persist_window: bool = False,
+            verbose: Optional[bool] = None
     ) -> Response:
         """Execute a command asynchronously"""
 
@@ -216,9 +209,9 @@ class Gowershell:
                 await asyncio.sleep(0.01)  # Small delay to prevent busy waiting
 
     async def execute_batch(
-        self,
-        commands: list[Union[str, Dict[str, Any]]],
-        concurrent: bool = False
+            self,
+            commands: list[Union[str, Dict[str, Any]]],
+            concurrent: bool = False
     ) -> list[Response]:
         """Execute multiple commands, optionally concurrently"""
 
@@ -311,6 +304,7 @@ class Gowershell:
                 self.proc.terminate()
             except:
                 pass
+
 
 @asynccontextmanager
 async def gowershell(verbose: bool = DEBUG, executable: str = exe):
