@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+Gowershell.egg-info/PKG-INFO
+Gowershell.egg-info/SOURCES.txt
+Gowershell.egg-info/dependency_links.txt
+Gowershell.egg-info/requires.txt
+Gowershell.egg-info/top_level.txt
+gowershell/__init__.py
+gowershell/core.py
+gowershell/gowershell.exe

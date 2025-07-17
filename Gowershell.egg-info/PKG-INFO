@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: Gowershell
+Version: 0.1.1
+Summary: Go remote-controlled cmd/powershell/wsl for python
+Author: Miles Luce
+License-Expression: MIT
+Project-URL: Repository, https://github.com/genderlesspit/Gowershell
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: singleton-decorator
+Requires-Dist: loguru
+Dynamic: license-file
