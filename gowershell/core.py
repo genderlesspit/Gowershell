@@ -1,9 +1,7 @@
-import asyncio
 import json
-import queue
 import subprocess
-import threading
-from contextlib import asynccontextmanager
+import time
+from contextlib import contextmanager
 from typing import Any, Optional, Dict, Union, List
 
 from loguru import logger as log
@@ -13,29 +11,35 @@ from gowershell import exe
 
 DEBUG = True
 
-def extract_json_blobs(content: str) -> List[Dict[str, Any]]:
-    log.debug(f"Starting synchronous extraction from content of length {len(content)}")
+def extract_json_blobs(content: str, verbose: bool = DEBUG) -> List[Dict[str, Any]]:
+    """Extract JSON objects from content string with optional verbose logging"""
+    if verbose:
+        log.debug(f"Starting synchronous extraction from content of length {len(content)}")
 
     results = []
     i = 0
     while i < len(content):
         if content[i] == '{':
-            log.debug(f"Found opening brace at position {i}")
+            if verbose:
+                log.debug(f"Found opening brace at position {i}")
             for j in range(len(content) - 1, i, -1):
                 if content[j] == '}':
                     try:
                         json_str = content[i:j+1]
                         parsed = json.loads(json_str)
                         results.append(parsed)
-                        log.debug(f"Successfully parsed JSON blob: {json_str[:50]}...")
+                        if verbose:
+                            log.debug(f"Successfully parsed JSON blob: {json_str[:50]}...")
                         i = j
                         break
                     except json.JSONDecodeError as e:
-                        log.debug(f"Failed to parse JSON at {i}:{j+1} - {e}")
+                        if verbose:
+                            log.debug(f"Failed to parse JSON at {i}:{j+1} - {e}")
                         pass
         i += 1
 
-    log.debug(f"Extraction complete. Found {len(results)} JSON blobs")
+    if verbose:
+        log.debug(f"Extraction complete. Found {len(results)} JSON blobs")
     return results
 
 class Response(dict):
@@ -62,8 +66,9 @@ class Response(dict):
             self[key] = value
 
         if "output" in self:
-            self.json = extract_json_blobs(self["output"])
-            log.debug(self.json)
+            self.json = extract_json_blobs(self["output"], verbose=verbose)
+            if verbose:
+                log.debug(self.json)
 
     def __getattr__(self, name):
         """Allow attribute access to dictionary items"""
@@ -93,31 +98,26 @@ class Response(dict):
 
 @singleton
 class Gowershell:
-    """Async-capable Gowershell wrapper with enhanced features"""
+    """Synchronous Gowershell wrapper with enhanced features"""
 
     def __init__(self, verbose: bool = DEBUG, executable: str = exe):
         self.verbose = verbose
         self.executable = executable
         self.proc: Optional[subprocess.Popen] = None
-        self._lock = asyncio.Lock()
-        self._thread_lock = threading.Lock()
-        self._response_queue = queue.Queue()
-        self._reader_thread = None
-        self._is_running = False
 
         if self.verbose:
             log.success(f"Successfully initialized Gowershell with executable: {executable}")
 
-    async def __aenter__(self):
-        """Async context manager entry"""
-        await self.start()
+    def __enter__(self):
+        """Context manager entry"""
+        self.start()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
-        await self.close()
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit"""
+        self.close()
 
-    async def start(self):
+    def start(self):
         """Start the Gowershell process"""
         if self.proc is not None:
             if self.verbose:
@@ -137,11 +137,6 @@ class Gowershell:
                 bufsize=1  # Line buffered
             )
 
-            # Start reader thread
-            self._is_running = True
-            self._reader_thread = threading.Thread(target=self._read_responses, daemon=True)
-            self._reader_thread.start()
-
             if self.verbose:
                 log.success("Gowershell process started successfully")
 
@@ -149,29 +144,16 @@ class Gowershell:
             log.error(f"Failed to start Gowershell process: {e}")
             raise
 
-    def _read_responses(self):
-        """Background thread to read responses from the process"""
-        while self._is_running and self.proc:
-            try:
-                line = self.proc.stdout.readline()
-                if line:
-                    self._response_queue.put(line.strip())
-                elif self.proc.poll() is not None:
-                    break
-            except Exception as e:
-                if self.verbose:
-                    log.error(f"Error reading response: {e}")
-                break
-
-    async def execute(
+    def execute(
             self,
             command: str,
             cmd_type: str = "cmd",
             headless: bool = True,
             persist_window: bool = False,
-            verbose: Optional[bool] = None
+            verbose: Optional[bool] = None,
+            timeout: float = 30.0
     ) -> Response:
-        """Execute a command asynchronously"""
+        """Execute a command synchronously"""
 
         # Use instance verbose setting if not specified
         if verbose is None:
@@ -179,155 +161,137 @@ class Gowershell:
 
         # Ensure process is started
         if self.proc is None:
-            await self.start()
+            self.start()
 
-        async with self._lock:
-            request = {
-                "command": command,
-                "type": cmd_type,
-                "headless": headless,
-                "persist_window": persist_window,
-                "verbose": verbose
-            }
+        request = {
+            "command": command,
+            "type": cmd_type,
+            "headless": headless,
+            "persist_window": persist_window,
+            "verbose": verbose
+        }
+
+        if verbose:
+            window_mode = "headless" if headless else f"headed ({'persistent' if persist_window else 'auto-close'})"
+            log.info(f"Executing command: {command} (type: {cmd_type}, mode: {window_mode})")
+
+        try:
+            # Send request
+            request_json = json.dumps(request) + "\n"
+            self.proc.stdin.write(request_json)
+            self.proc.stdin.flush()
+
+            # Wait for response with timeout
+            start_time = time.time()
+            response_line = ""
+
+            while time.time() - start_time < timeout:
+                if self.proc.stdout.readable():
+                    line = self.proc.stdout.readline()
+                    if line:
+                        response_line = line.strip()
+                        break
+                time.sleep(0.01)  # Small delay to prevent busy waiting
+
+            if not response_line:
+                raise TimeoutError(f"Command timed out after {timeout} seconds")
+
+            response_data = json.loads(response_line)
+            response = Response(verbose=verbose, **response_data)
 
             if verbose:
-                window_mode = "headless" if headless else f"headed ({'persistent' if persist_window else 'auto-close'})"
-                log.info(f"Executing command: {command} (type: {cmd_type}, mode: {window_mode})")
+                if response.success:
+                    log.success(f"Command completed in {response.duration_ms}ms")
+                else:
+                    log.error(f"Command failed: {response.error}")
 
-            try:
-                # Send request
-                request_json = json.dumps(request) + "\n"
-                self.proc.stdin.write(request_json)
-                self.proc.stdin.flush()
+                if response.debug:
+                    log.debug(f"Debug info: {response.debug}")
 
-                # Wait for response with timeout
-                response_line = await asyncio.wait_for(
-                    self._get_response(),
-                    timeout=30.0
-                )
+            return response
 
-                response_data = json.loads(response_line)
-                response = Response(verbose=verbose, **response_data)
+        except TimeoutError:
+            error_msg = f"Command timed out: {command}"
+            if verbose:
+                log.error(error_msg)
+            return Response(verbose=verbose, error=error_msg)
 
-                if verbose:
-                    if response.success:
-                        log.success(f"Command completed in {response.duration_ms}ms")
-                    else:
-                        log.error(f"Command failed: {response.error}")
+        except Exception as e:
+            error_msg = f"Failed to execute command: {e}"
+            if verbose:
+                log.error(error_msg)
+            return Response(verbose=verbose, error=error_msg)
 
-                    if response.debug:
-                        log.debug(f"Debug info: {response.debug}")
-
-                return response
-
-            except asyncio.TimeoutError:
-                error_msg = f"Command timed out: {command}"
-                if verbose:
-                    log.error(error_msg)
-                return Response(verbose=verbose, error=error_msg)
-
-            except Exception as e:
-                error_msg = f"Failed to execute command: {e}"
-                if verbose:
-                    log.error(error_msg)
-                return Response(verbose=verbose, error=error_msg)
-
-    async def _get_response(self) -> str:
-        """Get response from queue asynchronously"""
-        while True:
-            try:
-                return self._response_queue.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.01)  # Small delay to prevent busy waiting
-
-    async def execute_batch(
+    def execute_batch(
             self,
             commands: list[Union[str, Dict[str, Any]]],
             concurrent: bool = False
     ) -> list[Response]:
-        """Execute multiple commands, optionally concurrently"""
+        """Execute multiple commands sequentially (concurrent flag ignored in sync version)"""
 
-        if concurrent:
-            tasks = []
-            for cmd in commands:
-                if isinstance(cmd, str):
-                    task = self.execute(cmd)
-                else:
-                    task = self.execute(**cmd)
-                tasks.append(task)
+        if concurrent and self.verbose:
+            log.warning("Concurrent execution not supported in synchronous version, executing sequentially")
 
-            return await asyncio.gather(*tasks)
-        else:
-            results = []
-            for cmd in commands:
-                if isinstance(cmd, str):
-                    result = await self.execute(cmd)
-                else:
-                    result = await self.execute(**cmd)
-                results.append(result)
-            return results
+        results = []
+        for cmd in commands:
+            if isinstance(cmd, str):
+                result = self.execute(cmd)
+            else:
+                result = self.execute(**cmd)
+            results.append(result)
+        return results
 
     # Convenience methods for common use cases
-    async def cmd(self, command: str, headless: bool = True, persist: bool = False) -> Response:
+    def cmd(self, command: str, headless: bool = True, persist: bool = False) -> Response:
         """Execute a cmd command"""
-        return await self.execute(command, "cmd", headless, persist)
+        return self.execute(command, "cmd", headless, persist)
 
-    async def ps(self, command: str, headless: bool = True, persist: bool = False) -> Response:
+    def ps(self, command: str, headless: bool = True, persist: bool = False) -> Response:
         """Execute a PowerShell command"""
-        return await self.execute(command, "powershell", headless, persist)
+        return self.execute(command, "powershell", headless, persist)
 
-    async def wsl(self, command: str, headless: bool = True, persist: bool = False) -> Response:
+    def wsl(self, command: str, headless: bool = True, persist: bool = False) -> Response:
         """Execute a WSL command"""
-        return await self.execute(command, "wsl", headless, persist)
+        return self.execute(command, "wsl", headless, persist)
 
     # Window control convenience methods
-    async def show_cmd(self, command: str, persist: bool = True) -> Response:
+    def show_cmd(self, command: str, persist: bool = True) -> Response:
         """Execute cmd command in visible window"""
-        return await self.cmd(command, headless=False, persist=persist)
+        return self.cmd(command, headless=False, persist=persist)
 
-    async def show_ps(self, command: str, persist: bool = True) -> Response:
+    def show_ps(self, command: str, persist: bool = True) -> Response:
         """Execute PowerShell command in visible window"""
-        return await self.ps(command, headless=False, persist=persist)
+        return self.ps(command, headless=False, persist=persist)
 
-    async def quick_window(self, command: str, cmd_type: str = "cmd") -> Response:
+    def quick_window(self, command: str, cmd_type: str = "cmd") -> Response:
         """Show command output briefly then close window"""
-        return await self.execute(command, cmd_type, headless=False, persist_window=False)
+        return self.execute(command, cmd_type, headless=False, persist_window=False)
 
-    async def close(self):
+    def close(self):
         """Close the Gowershell process"""
         if self.verbose:
             log.info("Closing Gowershell process")
-
-        self._is_running = False
 
         if self.proc:
             try:
                 self.proc.stdin.close()
                 self.proc.terminate()
 
-                # Wait for process to terminate
-                await asyncio.wait_for(
-                    asyncio.create_task(self._wait_for_process()),
-                    timeout=5.0
-                )
+                # Wait for process to terminate with timeout
+                start_time = time.time()
+                while self.proc.poll() is None and time.time() - start_time < 5.0:
+                    time.sleep(0.1)
 
-            except asyncio.TimeoutError:
-                if self.verbose:
-                    log.warning("Process didn't terminate gracefully, killing...")
-                self.proc.kill()
+                if self.proc.poll() is None:
+                    if self.verbose:
+                        log.warning("Process didn't terminate gracefully, killing...")
+                    self.proc.kill()
+
             except Exception as e:
                 if self.verbose:
                     log.error(f"Error closing process: {e}")
             finally:
                 self.proc = None
-
-        if self._reader_thread and self._reader_thread.is_alive():
-            self._reader_thread.join(timeout=1.0)
-
-    async def _wait_for_process(self):
-        """Wait for process to terminate"""
-        while self.proc and self.proc.poll() is None:
-            await asyncio.sleep(0.1)
 
     def __del__(self):
         """Cleanup on deletion"""
@@ -338,12 +302,12 @@ class Gowershell:
                 pass
 
 
-@asynccontextmanager
-async def gowershell(verbose: bool = DEBUG, executable: str = exe):
-    """Async context manager for Gowershell"""
+@contextmanager
+def gowershell(verbose: bool = DEBUG, executable: str = exe):
+    """Context manager for Gowershell"""
     shell = Gowershell(verbose=verbose, executable=executable)
     try:
-        await shell.start()
+        shell.start()
         yield shell
     finally:
-        await shell.close()
+        shell.close()
